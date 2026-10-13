@@ -147,6 +147,17 @@ body{display:flex;align-items:center;justify-content:center;}
 .foot-left .f-label{color:var(--muted);font-weight:700;font-size:14px;letter-spacing:.1em;}
 .foot-left .f-value{color:#fff;font-weight:800;font-size:18px;}
 .foot-badge img{height:34px;width:auto;display:block;}
+
+/* FRESHNESS CHIP (top right): when the AccuLynx data was pulled + next refresh. Dot: lime when under 1 hour old, fades to red as the next refresh nears */
+.fresh{display:inline-flex;align-items:center;gap:16px;background:var(--yellow);color:var(--black);padding:8px 20px;
+  font-family:'Barlow Condensed',sans-serif;text-transform:uppercase;}
+.fresh[hidden]{display:none;}
+.fresh-dot{width:22px;height:22px;border-radius:50%;background:#7DDB00;box-shadow:0 0 0 3px var(--black);flex:none;}
+.fresh-blk{display:flex;flex-direction:column;line-height:1;}
+.fresh-blk small{font-weight:700;font-size:13px;letter-spacing:.12em;opacity:.7;}
+.fresh-blk b{font-weight:800;font-size:26px;white-space:nowrap;margin-top:3px;}
+.fresh-sep{border-left:2px solid rgba(0,0,0,.25);padding-left:16px;}
+.head-right{display:flex;align-items:center;gap:16px;}
 </style>
 </head>
 
@@ -179,6 +190,11 @@ let DATA = {
       <div class="head-title">Sales Team Scoreboard</div>
     </div>
     <div class="head-right">
+      <div class="fresh" id="fresh" hidden title="Green = pulled within the last hour. It turns red as the next refresh gets close.">
+        <i class="fresh-dot" id="fresh-dot"></i>
+        <span class="fresh-blk"><small>AccuLynx data</small><b id="fresh-run">–</b></span>
+        <span class="fresh-blk fresh-sep"><small>Next refresh</small><b id="fresh-next">–</b></span>
+      </div>
       <div class="qchip" id="quarter-label"></div>
     </div>
   </div>
@@ -292,10 +308,39 @@ function render(){
     wStart.toLocaleDateString("en-US",{month:"short",day:"numeric",timeZone:"UTC"})+" — "+
     rd.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric",timeZone:"UTC"});
 }
+/* ---------- FRESHNESS CHIP ---------- */
+var ETF = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false });
+function etHM(d) { var p = ETF.formatToParts(d), h = "", m = ""; p.forEach(function (x) { if (x.type === "hour") h = x.value; if (x.type === "minute") m = x.value; }); return (h === "24" ? "00" : h) + ":" + m; }
+function clock(d) { return d.toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" }); }
+function dayTag(d) {
+  var f = function (x) { return x.toLocaleDateString("en-US", { timeZone: "America/New_York" }); };
+  var now = new Date(), y = new Date(now.getTime() - 864e5), t = new Date(now.getTime() + 864e5);
+  return f(d) === f(now) ? "" : f(d) === f(y) ? "Yesterday " : f(d) === f(t) ? "Tomorrow " : d.toLocaleDateString("en-US", { timeZone: "America/New_York", weekday: "short" }) + " ";
+}
+function nextSlot(after, slots) {   // first scheduled AccuLynx send (Eastern time) after "after"
+  var t = new Date(Math.ceil(after.getTime() / 60000) * 60000 + 60000);
+  for (var i = 0; i < 2 * 1440; i++, t = new Date(t.getTime() + 60000)) if (slots.indexOf(etHM(t)) >= 0) return t;
+  return null;
+}
+function renderFresh() {
+  var F = DATA && DATA.freshness, box = document.getElementById("fresh");
+  if (!F || !F.acculynxRun) { box.hidden = true; return; }
+  var run = new Date(F.acculynxRun), now = new Date(), lag = (F.lagMinutes || 20) * 60000;
+  var slot = nextSlot(run, F.scheduleET || []), next = slot ? new Date(slot.getTime() + lag) : null;
+  document.getElementById("fresh-run").textContent = dayTag(run) + clock(run);
+  var late = next && now > new Date(next.getTime() + 30 * 60000);
+  document.getElementById("fresh-next").textContent = !next ? "–" : late ? "Late" : "~" + dayTag(next) + clock(next);
+  var age = (now - run) / 60000, span = next ? (next - run) / 60000 : 180, f;
+  f = age <= 60 ? 0 : Math.min(1, (age - 60) / Math.max(1, span - 60));
+  if (late) f = 1;
+  document.getElementById("fresh-dot").style.background = f === 0 ? "#7DDB00" : "hsl(" + Math.round(90 * (1 - f)) + ",100%,45%)";
+  box.hidden = false;
+}
+setInterval(renderFresh, 30000);
 render(); // render inline fallback first so the screen is never blank
 fetch("https://rapidhsg.github.io/dashboard-engine/rr2-data.json?t=" + Math.floor(Date.now() / 60000), { cache: "no-store" })
   .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-  .then(function (d) { DATA = d; render(); })
+  .then(function (d) { DATA = d; render(); renderFresh(); })
   .catch(function (e) { console.warn("dashboard-engine unreachable, using fallback:", e); });
 </script>
 
